@@ -6,26 +6,27 @@ from collections import defaultdict
 import random
 import time
 import pickle
- 
+import codecs
+
 SHIFT = 0; RIGHT = 1; LEFT = 2;
 MOVES = (SHIFT, RIGHT, LEFT)
 START = ['-START-', '-START2-']
 END = ['-END-', '-END2-']
- 
- 
+
+
 class DefaultList(list):
     """A list that returns a default value if index out of bounds."""
     def __init__(self, default=None):
         self.default = default
         list.__init__(self)
- 
+
     def __getitem__(self, index):
         try:
             return list.__getitem__(self, index)
         except IndexError:
             return self.default
- 
- 
+
+
 class Parse(object):
     def __init__(self, n):
         self.n = n
@@ -36,7 +37,7 @@ class Parse(object):
         for i in range(n+1):
             self.lefts.append(DefaultList(0))
             self.rights.append(DefaultList(0))
- 
+
     def add(self, head, child, label=None):
         self.heads[child] = head
         self.labels[child] = label
@@ -44,8 +45,8 @@ class Parse(object):
             self.lefts[head].append(child)
         else:
             self.rights[head].append(child)
- 
- 
+
+
 class Parser(object):
     def __init__(self, load=True):
         model_dir = os.path.dirname(__file__)
@@ -54,7 +55,7 @@ class Parser(object):
             self.model.load(path.join(model_dir, 'parser.pickle'))
         self.tagger = PerceptronTagger(load=load)
         self.confusion_matrix = defaultdict(lambda: defaultdict(int))
- 
+
     def save(self):
         self.model.save(path.join(os.path.dirname(__file__), 'parser.pickle'))
         self.tagger.save()
@@ -70,7 +71,7 @@ class Parser(object):
             guess = max(valid_moves, key=lambda move: scores[move])
             i = transition(guess, i, stack, parse)
         return tags, parse.heads
- 
+
     def train_one(self, itn, words, gold_tags, gold_heads):
         n = len(words)
         i = 2; stack = [1]; parse = Parse(n)
@@ -87,8 +88,8 @@ class Parser(object):
             i = transition(guess, i, stack, parse)
             self.confusion_matrix[best][guess] += 1
         return len([i for i in range(n-1) if parse.heads[i] == gold_heads[i]])
- 
- 
+
+
 def transition(move, i, stack, parse):
     if move == SHIFT:
         stack.append(i)
@@ -100,8 +101,8 @@ def transition(move, i, stack, parse):
         parse.add(i, stack.pop())
         return i
     assert move in MOVES
- 
- 
+
+
 def get_valid_moves(i, n, stack_depth):
     moves = []
     if (i+1) < n:
@@ -111,15 +112,15 @@ def get_valid_moves(i, n, stack_depth):
     if stack_depth >= 1:
         moves.append(LEFT)
     return moves
- 
- 
+
+
 def get_gold_moves(n0, n, stack, heads, gold):
     def deps_between(target, others, gold):
         for word in others:
             if gold[word] == target or gold[target] == word:
                 return True
         return False
- 
+
     valid = get_valid_moves(n0, n, len(stack))
     if not stack or (SHIFT in valid and gold[n0] == stack[-1]):
         return [SHIFT]
@@ -139,8 +140,8 @@ def get_gold_moves(n0, n, stack, heads, gold):
         costly.add(LEFT)
         costly.add(RIGHT)
     return [m for m in MOVES if m not in costly]
- 
- 
+
+
 def extract_features(words, tags, n0, n, stack, parse):
     def get_stack_context(depth, stack, data):
         if depth >= 3:
@@ -151,7 +152,7 @@ def extract_features(words, tags, n0, n, stack, parse):
             return data[stack[-1]], '', ''
         else:
             return '', '', ''
- 
+
     def get_buffer_context(i, n, data):
         if i + 1 >= n:
             return data[i], '', ''
@@ -159,7 +160,7 @@ def extract_features(words, tags, n0, n, stack, parse):
             return data[i], data[i + 1], ''
         else:
             return data[i], data[i + 1], data[i + 2]
- 
+
     def get_parse_context(word, deps, data):
         if word == -1:
             return 0, '', ''
@@ -171,7 +172,7 @@ def extract_features(words, tags, n0, n, stack, parse):
             return 1, data[deps[-1]], ''
         else:
             return valency, data[deps[-1]], data[deps[-2]]
- 
+
     features = {}
     # Set up the context pieces --- the word (W) and tag (T) of:
     # S0-2: Top three words on the stack
@@ -179,10 +180,10 @@ def extract_features(words, tags, n0, n, stack, parse):
     # n0b1, n0b2: Two leftmost children of the first word of the buffer
     # s0b1, s0b2: Two leftmost children of the top word of the stack
     # s0f1, s0f2: Two rightmost children of the top word of the stack
- 
+
     depth = len(stack)
     s0 = stack[-1] if depth else -1
- 
+
     Ws0, Ws1, Ws2 = get_stack_context(depth, stack, words)
     Ts0, Ts1, Ts2 = get_stack_context(depth, stack, tags)
    
@@ -197,14 +198,14 @@ def extract_features(words, tags, n0, n, stack, parse):
   
     Vs0b, Ws0b1, Ws0b2 = get_parse_context(s0, parse.lefts, words)
     _, Ts0b1, Ts0b2 = get_parse_context(s0, parse.lefts, tags)
- 
+
     Vs0f, Ws0f1, Ws0f2 = get_parse_context(s0, parse.rights, words)
     _, Ts0f1, Ts0f2 = get_parse_context(s0, parse.rights, tags)
     
     # Cap numeric features at 5? 
     # String-distance
     Ds0n0 = min((n0 - s0, 5)) if s0 != 0 else 0
- 
+
     features['bias'] = 1
     # Add word and tag unigrams
     for w in (Wn0, Wn1, Wn2, Ws0, Ws1, Ws2, Wn0b1, Wn0b2, Ws0b1, Ws0b2, Ws0f1, Ws0f2):
@@ -213,12 +214,12 @@ def extract_features(words, tags, n0, n, stack, parse):
     for t in (Tn0, Tn1, Tn2, Ts0, Ts1, Ts2, Tn0b1, Tn0b2, Ts0b1, Ts0b2, Ts0f1, Ts0f2):
         if t:
             features['t=%s' % t] = 1
- 
+
     # Add word/tag pairs
     for i, (w, t) in enumerate(((Wn0, Tn0), (Wn1, Tn1), (Wn2, Tn2), (Ws0, Ts0))):
         if w or t:
             features['%d w=%s, t=%s' % (i, w, t)] = 1
- 
+
     # Add some bigrams
     features['s0w=%s,  n0w=%s' % (Ws0, Wn0)] = 1
     features['wn0tn0-ws0 %s/%s %s' % (Wn0, Tn0, Ws0)] = 1
@@ -228,7 +229,7 @@ def extract_features(words, tags, n0, n, stack, parse):
     features['wt-wt %s/%s %s/%s' % (Ws0, Ts0, Wn0, Tn0)] = 1
     features['tt s0=%s n0=%s' % (Ts0, Tn0)] = 1
     features['tt n0=%s n1=%s' % (Tn0, Tn1)] = 1
- 
+
     # Add some tag trigrams
     trigrams = ((Tn0, Tn1, Tn2), (Ts0, Tn0, Tn1), (Ts0, Ts1, Tn0), 
                 (Ts0, Ts0f1, Tn0), (Ts0, Ts0f1, Tn0), (Ts0, Tn0, Tn0b1),
@@ -237,7 +238,7 @@ def extract_features(words, tags, n0, n, stack, parse):
     for i, (t1, t2, t3) in enumerate(trigrams):
         if t1 or t2 or t3:
             features['ttt-%d %s %s %s' % (i, t1, t2, t3)] = 1
- 
+
     # Add some valency and distance features
     vw = ((Ws0, Vs0f), (Ws0, Vs0b), (Wn0, Vn0b))
     vt = ((Ts0, Vs0f), (Ts0, Vs0b), (Tn0, Vn0b))
@@ -247,8 +248,8 @@ def extract_features(words, tags, n0, n, stack, parse):
         if w_t or v_d:
             features['val/d-%d %s %d' % (i, w_t, v_d)] = 1
     return features
- 
- 
+
+
 class Perceptron(object):
     def __init__(self, classes=None):
         # Each feature gets its own weight vector, so weights is a dict-of-arrays
@@ -263,13 +264,13 @@ class Perceptron(object):
         self._tstamps = defaultdict(int)
         # Number of instances seen
         self.i = 0
- 
+
     def predict(self, features):
         '''Dot-product the features and current weights and return the best class.'''
         scores = self.score(features)
         # Do a secondary alphabetic sort, for stability
         return max(self.classes, key=lambda clas: (scores[clas], clas))
- 
+
     def score(self, features):
         all_weights = self.weights
         scores = dict((clas, 0) for clas in self.classes)
@@ -282,14 +283,14 @@ class Perceptron(object):
             for clas, weight in weights.items():
                 scores[clas] += value * weight
         return scores
- 
+
     def update(self, truth, guess, features):       
         def upd_feat(c, f, w, v):
             param = (f, c)
             self._totals[param] += (self.i - self._tstamps[param]) * w
             self._tstamps[param] = self.i
             self.weights[f][c] = w + v
- 
+
         self.i += 1
         if truth == guess:
             return None
@@ -297,7 +298,7 @@ class Perceptron(object):
             weights = self.weights.setdefault(f, {})
             upd_feat(truth, f, weights.get(truth, 0.0), 1.0)
             upd_feat(guess, f, weights.get(guess, 0.0), -1.0)
- 
+
     def average_weights(self):
         for feat, weights in self.weights.items():
             new_feat_weights = {}
@@ -309,15 +310,15 @@ class Perceptron(object):
                 if averaged:
                     new_feat_weights[clas] = averaged
             self.weights[feat] = new_feat_weights
- 
+
     def save(self, path):
         print "Saving model to %s" % path
         pickle.dump(self.weights, open(path, 'w'))
- 
+
     def load(self, path):
         self.weights = pickle.load(open(path))
- 
- 
+
+
 class PerceptronTagger(object):
     '''Greedy Averaged Perceptron tagger'''
     model_loc = os.path.join(os.path.dirname(__file__), 'tagger.pickle')
@@ -330,7 +331,7 @@ class PerceptronTagger(object):
         self.model = Perceptron(self.classes)
         if load:
             self.load(PerceptronTagger.model_loc)
- 
+
     def tag(self, words, tokenize=True):
         prev, prev2 = START
         tags = DefaultList('') 
@@ -343,11 +344,11 @@ class PerceptronTagger(object):
             tags.append(tag)
             prev2 = prev; prev = tag
         return tags
- 
+
     def start_training(self, sentences):
         self._make_tagdict(sentences)
         self.model = Perceptron(self.classes)
- 
+
     def train(self, sentences, save_loc=None, nr_iter=5):
         '''Train a model from sentences, and save it at save_loc. nr_iter
         controls the number of Perceptron training iterations.'''
@@ -357,12 +358,12 @@ class PerceptronTagger(object):
                 self.train_one(words, tags)
             random.shuffle(sentences)
         self.end_training(save_loc)
- 
+
     def save(self):
         # Pickle as a binary file
         pickle.dump((self.model.weights, self.tagdict, self.classes),
                     open(PerceptronTagger.model_loc, 'wb'), -1)
- 
+
     def train_one(self, words, tags):
         prev, prev2 = START
         context = START + [self._normalize(w) for w in words] + END
@@ -373,12 +374,12 @@ class PerceptronTagger(object):
                 guess = self.model.predict(feats)
                 self.model.update(tags[i], guess, feats)
             prev2 = prev; prev = guess
- 
+
     def load(self, loc):
         w_td_c = pickle.load(open(loc, 'rb'))
         self.model.weights, self.tagdict, self.classes = w_td_c
         self.model.classes = self.classes
- 
+
     def _normalize(self, word):
         if '-' in word and word[0] != '-':
             return '!HYPHEN'
@@ -388,14 +389,14 @@ class PerceptronTagger(object):
             return '!DIGITS'
         else:
             return word.lower()
- 
+
     def _get_features(self, i, word, context, prev, prev2):
         '''Map tokens into a feature representation, implemented as a
         {hashable: float} dict. If the features change, a new model must be
         trained.'''
         def add(name, *args):
             features[' '.join((name,) + tuple(args))] += 1
- 
+
         i += len(START)
         features = defaultdict(int)
         # It's useful to have a constant feature, which acts sort of like a prior
@@ -414,7 +415,7 @@ class PerceptronTagger(object):
         add('i+1 suffix', context[i+1][-3:])
         add('i+2 word', context[i+2])
         return features
- 
+
     def _make_tagdict(self, sentences):
         '''Make a tag dictionary for single-tag words.'''
         counts = defaultdict(lambda: defaultdict(int))
@@ -431,11 +432,11 @@ class PerceptronTagger(object):
             # Only add quite unambiguous words
             if n >= freq_thresh and (float(mode) / n) >= ambiguity_thresh:
                 self.tagdict[word] = tag
- 
+
 def _pc(n, d):
     return (float(n) / d) * 100
- 
- 
+
+
 def train(parser, sentences, nr_iter):
     parser.tagger.start_training(sentences)
     for itn in range(nr_iter):
@@ -451,51 +452,46 @@ def train(parser, sentences, nr_iter):
             parser.tagger.model.average_weights()
     print 'Averaging weights'
     parser.model.average_weights()
- 
+
 def read_pos(loc):
-    for line in open(loc):
-        if not line.strip():
-            continue
-        words = DefaultList('')
-        tags = DefaultList('')
-        for token in line.split():
-            if not token:
-                continue
-            word, tag = token.rsplit('/', 1)
-            #words.append(normalize(word))
-            words.append(word)
-            tags.append(tag)
+    for sent_str in codecs.open(loc, 'r', 'utf-8').read().strip().split('\n\n'):
+        lines = [line.split() for line in sent_str.split('\n')]
+        words = DefaultList(''); tags = DefaultList('')
+        for i, (x1, word, x3, x4, pos, x6, x7, x8, x9, x10) in enumerate(lines):
+            words.append(intern(word))
+            tags.append(intern(pos))
         pad_tokens(words); pad_tokens(tags)
-        yield words, tags
- 
- 
+        yield words, tags        
+
+
 def read_conll(loc):
-    for sent_str in open(loc).read().strip().split('\n\n'):
+    for sent_str in codecs.open(loc, 'r', 'utf-8').read().strip().split('\n\n'):
         lines = [line.split() for line in sent_str.split('\n')]
         words = DefaultList(''); tags = DefaultList('')
         heads = [None]; labels = [None]
-        for i, (word, pos, head, label) in enumerate(lines):
-            words.append(intern(word))
-            #words.append(intern(normalize(word)))
-            tags.append(intern(pos))
+        
+        for (x1, word, x3, x4, pos, x6, head, label, x9, x10) in lines:
+            words.append(word)
+            tags.append(pos)
             heads.append(int(head) + 1 if head != '-1' else len(lines) + 1)
             labels.append(label)
         pad_tokens(words); pad_tokens(tags)
         yield words, tags, heads, labels
- 
- 
+
+
 def pad_tokens(tokens):
     tokens.insert(0, '<start>')
     tokens.append('ROOT')
- 
- 
+
+
 def main(model_dir, train_loc, heldout_in, heldout_gold):
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
- 
-    input_sents = list(read_pos(heldout_in))
+
+    input_sents = list(read_conll(heldout_in))
     parser = Parser(load=False)
     sentences = list(read_conll(train_loc))
+    
     train(parser, sentences, nr_iter=15)
     parser.save()
     c = 0
@@ -513,7 +509,7 @@ def main(model_dir, train_loc, heldout_in, heldout_gold):
     t2 = time.time()
     print 'Parsing took %0.3f ms' % ((t2-t1)*1000.0)
     print c, t, float(c)/t
- 
- 
+
+
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
